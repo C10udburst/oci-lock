@@ -33,11 +33,13 @@
               pkgs.crane
             ];
             installPhase = ''
-              mkdir -p $out/bin
+              mkdir -p $out/bin $out/lib
+              cp -r oci_lock $out/lib/
               cp oci_lock.py $out/bin/oci-lock
               chmod +x $out/bin/oci-lock
               wrapProgram $out/bin/oci-lock \
-                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.python3 pkgs.crane ]}
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.python3 pkgs.crane ]} \
+                --prefix PYTHONPATH : $out/lib
             '';
           };
           default = self.packages.${system}.oci-lock;

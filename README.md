@@ -8,6 +8,21 @@ Just as `flake.lock` resolves mutable Git branches and tags to exact commit hash
 
 ---
 
+## Why?
+
+In NixOS, your entire system configuration is declarative, reproducible, and tracked across generations. However, standard OCI container configurations (e.g. `virtualisation.oci-containers`) often rely on mutable image tags like `:latest`.
+
+This introduces two major issues:
+1. **Unpredictable Rebuilds**: Rebuilding your system might pull an updated upstream image with breaking changes or regressions, even if your Nix code didn't change.
+2. **Broken Rollbacks**: Standard NixOS rollback (`nixos-rebuild --rollback`) cannot roll back your containers if the tag still points to the broken upstream build.
+
+`oci-lock` bridges this gap:
+- **NixOS Rollback for OCI Containers**: Each NixOS generation evaluates against the exact digests pinned in `oci.lock`. Rolling back to an older NixOS generation immediately rolls back your containers to the exact image digests that generation was built with.
+- **Truly Hermetic Deployments**: Container pulls become deterministic and reproducible across machines and CI/CD pipelines.
+- **Auditable Versioning**: Container image updates become explicit, reviewable Git diffs when running `oci-lock update`.
+
+---
+
 ## Features
 
 - **Immutable Pinning**: Locks mutable tags (`image:latest`) to exact, content-addressed OCI digests (`image@sha256:<digest>`).
@@ -37,37 +52,45 @@ nix shell github:C10udburst/oci-lock
 #### 1. Add an Image
 Add a container image to `oci.lock` in the current directory:
 ```bash
-oci-lock add b3log/siyuan
-oci-lock add ghcr.io/homarr-labs/homarr:latest
+oci-lock add alpine
+oci-lock add busybox:latest
 ```
 *(If no tag is specified, `:latest` is assumed).*
 
-#### 2. Update All Images
+#### 2. Remove an Image
+Remove an entry from `oci.lock`:
+```bash
+oci-lock remove alpine
+# or using the rm alias
+oci-lock rm busybox:latest
+```
+
+#### 3. Update All Images
 Update all entries in `oci.lock` to their latest registry digests:
 ```bash
 oci-lock update
 ```
 Displays a clear summary of which images were updated and which remained unchanged:
 ```text
-Fetching digest for b3log/siyuan:latest...
-Fetching digest for ghcr.io/homarr-labs/homarr:latest...
+Fetching digest for alpine:latest...
+Fetching digest for busybox:latest...
 
 Summary of OCI image locks:
 ─────────────────────────────
 Updated (1):
-  • b3log/siyuan:latest
-    b3log/siyuan@sha256:5a4f... -> b3log/siyuan@sha256:6ab1...
+  • alpine:latest
+    alpine@sha256:1234... -> alpine@sha256:28bd...
 
 Unchanged (1):
-  • ghcr.io/homarr-labs/homarr:latest: ghcr.io/homarr-labs/homarr@sha256:1f5b...
+  • busybox:latest: busybox@sha256:dc2d...
 ```
 
-#### 3. Update a Specific Image
+#### 4. Update a Specific Image
 Update only a single image in `oci.lock`:
 ```bash
-oci-lock update b3log/siyuan
+oci-lock update alpine
 # or
-oci-lock update ghcr.io/homarr-labs/homarr:latest
+oci-lock update busybox:latest
 ```
 
 ---
@@ -78,11 +101,8 @@ The generated `oci.lock` is clean, sorted JSON mapping mutable image tags to imm
 
 ```json
 {
-  "b3log/siyuan:latest": "b3log/siyuan@sha256:6ab17ed3ca40f646eab674f3fdcc459ff186614c02434b9b07709bd4cc98716d",
-  "ghcr.io/homarr-labs/homarr:latest": "ghcr.io/homarr-labs/homarr@sha256:1f5b892aeef4ad0a4907f075777bbd0ce7120f4cdc53b9f3f028519250421aed",
-  "ghcr.io/manyfold3d/manyfold-solo:latest": "ghcr.io/manyfold3d/manyfold-solo@sha256:f620fe830c8964abb0c6ab9c35ae58a3e7426e939adddbba9def12dd618b4d42",
-  "ghcr.io/transmute-app/transmute:latest": "ghcr.io/transmute-app/transmute@sha256:51a32b28e0cb84cde624ca41570f069d91ee7e83fac5c9d0b970e7a583b3abde",
-  "wealthfolio/wealthfolio:latest": "wealthfolio/wealthfolio@sha256:3c6f117828949204029c2b4a391f039e62987b4e091139e11b04e6764b5f6866"
+  "alpine:latest": "alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+  "busybox:latest": "busybox@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616"
 }
 ```
 
@@ -107,9 +127,9 @@ let
   resolveImage = image: ociLock.${image} or image;
 in
 {
-  virtualisation.oci-containers.containers.homarr = {
-    image = resolveImage "ghcr.io/homarr-labs/homarr:latest";
-    ports = [ "7575:7575" ];
+  virtualisation.oci-containers.containers.alpine = {
+    image = resolveImage "alpine:latest";
+    cmd = [ "echo" "hello from locked alpine" ];
   };
 }
 ```
