@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-oci-lock: Manage and pin OCI container images in oci.lock.
-Similar to flake.lock, maps 'image:latest' to 'image:<actual tag>'.
+oci-lock: Manage and pin OCI container images to immutable cryptographic hashes in oci.lock.
+Similar to flake.lock, maps 'image:latest' to 'image@sha256:<digest>'.
 """
 
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -77,95 +76,27 @@ def normalize_key(spec: str) -> str:
     return spec
 
 
-def parse_image_spec(spec: str) -> tuple[str, str]:
-    """Extract (repo, tag) from an image specifier."""
-    parts = spec.rsplit(":", 1)
+def parse_repo(key: str) -> str:
+    """Extract repository name without tag or digest."""
+    if "@" in key:
+        return key.split("@", 1)[0]
+    parts = key.rsplit(":", 1)
     if len(parts) == 1 or "/" in parts[1]:
-        return spec, "latest"
-    return parts[0], parts[1]
+        return key
+    return parts[0]
 
 
-def parse_version(tag: str):
+def resolve_digest(image_spec: str) -> tuple[str, str]:
     """
-    Parse a tag into a sortable tuple.
-    Returns: (major, minor, patch, -is_prerelease, num_components, has_v) or None.
+    Given an image spec (e.g. repo:latest or repo), return (pinned_spec, digest).
+    pinned_spec will be 'repo@sha256:...'.
     """
-    clean = tag.lstrip("v")
-    m = re.match(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[.-]?([a-zA-Z0-9.-]+))?$", clean)
-    if not m:
-        return None
-    major = int(m.group(1))
-    minor = int(m.group(2)) if m.group(2) is not None else 0
-    patch = int(m.group(3)) if m.group(3) is not None else 0
-    prerelease = m.group(4) or ""
-    is_prerelease = 1 if prerelease else 0
-    num_components = sum(
-        1 for g in [m.group(1), m.group(2), m.group(3)] if g is not None
-    )
-    has_v = 1 if tag.startswith("v") else 0
-    return (major, minor, patch, -is_prerelease, num_components, has_v)
-
-
-def resolve_actual_tag(repo: str, target_tag: str = "latest") -> str:
-    """Find the actual version tag matching target_tag's digest."""
-    full_target = f"{repo}:{target_tag}"
-    print(f"Resolving tag for {cyan(full_target)}...", flush=True)
-
-    try:
-        target_digest = run_cmd([CRANE_BIN, "digest", full_target])
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch digest for {full_target}: {e}") from e
-
-    try:
-        raw_tags = run_cmd([CRANE_BIN, "ls", repo]).splitlines()
-    except Exception as e:
-        raise RuntimeError(f"Failed to list tags for {repo}: {e}") from e
-
-    candidates = []
-    for t in raw_tags:
-        t = t.strip()
-        if not t or t == target_tag:
-            continue
-        # Skip git sha tags, PR tags, and non-version tags
-        if (
-            t.startswith("sha-")
-            or t.startswith("pr-")
-            or t.startswith("sha256-")
-            or re.match(r"^[0-9a-f]{32,64}$", t)
-        ):
-            continue
-        v = parse_version(t)
-        if v is not None and v[3] == 0:  # Non-prereleases
-            candidates.append((v, t))
-
-    # Sort with highest version first
-    candidates.sort(key=lambda x: x[0], reverse=True)
-
-    # Check top candidates for matching digest
-    for _, t in candidates[:25]:
-        try:
-            d = run_cmd([CRANE_BIN, "digest", f"{repo}:{t}"])
-            if d == target_digest:
-                return f"{repo}:{t}"
-        except Exception:
-            continue
-
-    # If no exact digest match was found among stable releases, check top candidate or fallback
-    if candidates:
-        top_tag = candidates[0][1]
-        print(
-            yellow(
-                f"  Warning: No release tag directly matching digest of {full_target}. Using highest semver tag '{top_tag}'."
-            ),
-            file=sys.stderr,
-        )
-        return f"{repo}:{top_tag}"
-
-    print(
-        yellow(f"  Warning: No semver tag found for {repo}. Keeping '{target_tag}'."),
-        file=sys.stderr,
-    )
-    return full_target
+    key = normalize_key(image_spec)
+    repo = parse_repo(key)
+    print(f"Fetching digest for {cyan(key)}...", flush=True)
+    digest = run_cmd([CRANE_BIN, "digest", key])
+    pinned = f"{repo}@{digest}"
+    return pinned, digest
 
 
 def load_lockfile(path: Path) -> dict[str, str]:
@@ -185,21 +116,20 @@ def save_lockfile(path: Path, data: dict[str, str]):
 def cmd_add(args, lock_path: Path):
     check_crane()
     key = normalize_key(args.name)
-    repo, tag = parse_image_spec(key)
+    pinned, digest = resolve_digest(key)
 
-    actual_target = resolve_actual_tag(repo, tag)
     data = load_lockfile(lock_path)
     old_target = data.get(key)
 
-    data[key] = actual_target
+    data[key] = pinned
     save_lockfile(lock_path, data)
 
-    if old_target and old_target != actual_target:
+    if old_target and old_target != pinned:
         print(
-            green(f"Updated {bold(key)}: {dim(old_target)} -> {bold(actual_target)} in {lock_path.name}")
+            green(f"Updated {bold(key)}: {dim(old_target)} -> {bold(pinned)} in {lock_path.name}")
         )
     else:
-        print(green(f"Added {bold(key)} -> {bold(actual_target)} to {lock_path.name}"))
+        print(green(f"Added {bold(key)} -> {bold(pinned)} to {lock_path.name}"))
 
 
 def cmd_update(args, lock_path: Path):
@@ -236,11 +166,10 @@ def cmd_update(args, lock_path: Path):
 
     for key in target_keys:
         old_val = data[key]
-        repo, tag = parse_image_spec(key)
         try:
-            new_val = resolve_actual_tag(repo, tag)
+            new_val, _ = resolve_digest(key)
         except Exception as e:
-            print(red(f"Failed to update {key}: {e}"), file=sys.stderr)
+            print(red(f"Failed to fetch digest for {key}: {e}"), file=sys.stderr)
             unchanged.append((key, old_val))
             continue
 
@@ -271,20 +200,21 @@ def cmd_update(args, lock_path: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="oci-lock", 
-        description="Pin and update OCI container image versions in oci.lock (similar to flake.lock)."
+    parser = argparse.ArgumentParser(
+        prog="oci-lock",
+        description="Pin and update OCI container images to immutable cryptographic hashes in oci.lock (similar to flake.lock).",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # add
-    parser_add = subparsers.add_parser("add", help="Add an image to oci.lock")
+    parser_add = subparsers.add_parser("add", help="Add an image to oci.lock pinned to its hash")
     parser_add.add_argument(
         "name",
         help="Image name to add, e.g. 'ghcr.io/homarr-labs/homarr' or 'ghcr.io/homarr-labs/homarr:latest'",
     )
 
     # update
-    parser_update = subparsers.add_parser("update", help="Update image tags in oci.lock")
+    parser_update = subparsers.add_parser("update", help="Update image hashes in oci.lock")
     parser_update.add_argument(
         "image",
         nargs="?",
