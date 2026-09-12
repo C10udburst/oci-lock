@@ -271,7 +271,7 @@ def cmd_update(args, lock_path: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(prog="oci-lock", 
         description="Pin and update OCI container image versions in oci.lock (similar to flake.lock)."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
