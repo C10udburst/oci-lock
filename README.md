@@ -93,6 +93,41 @@ oci-lock update alpine
 oci-lock update busybox:latest
 ```
 
+#### 5. Custom Lockfile Path
+Specify a different lockfile location with `-f`, `--file`, or `--lockfile`:
+```bash
+oci-lock -f path/to/custom.lock add alpine
+oci-lock rm -f path/to/custom.lock alpine
+oci-lock update --file path/to/custom.lock
+```
+
+#### 6. Shell Tab Completion
+`oci-lock` supports tab completion for commands, flags, and existing lockfile entries (for `rm` and `update`):
+
+##### Bash
+```bash
+source <(oci-lock completion bash)
+```
+To enable permanently:
+```bash
+oci-lock completion bash > ~/.local/share/bash-completion/completions/oci-lock
+# or add to ~/.bashrc:
+eval "$(oci-lock completion bash)"
+```
+
+##### Zsh
+```bash
+# Add to ~/.zshrc:
+eval "$(oci-lock completion zsh)"
+```
+
+##### Fish
+```bash
+oci-lock completion fish > ~/.config/fish/completions/oci-lock.fish
+```
+
+When installed via Nix flake (`nix profile install`, `nix shell`, etc.), completions for bash, zsh, and fish are installed automatically.
+
 ---
 
 ## Lockfile Format (`oci.lock`)

@@ -40,6 +40,15 @@
               wrapProgram $out/bin/oci-lock \
                 --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.python3 pkgs.crane ]} \
                 --prefix PYTHONPATH : $out/lib
+
+              patchShebangs $out/bin
+
+              mkdir -p $out/share/bash-completion/completions
+              mkdir -p $out/share/zsh/site-functions
+              mkdir -p $out/share/fish/vendor_completions.d
+              $out/bin/oci-lock completion bash > $out/share/bash-completion/completions/oci-lock
+              $out/bin/oci-lock completion zsh > $out/share/zsh/site-functions/_oci-lock
+              $out/bin/oci-lock completion fish > $out/share/fish/vendor_completions.d/oci-lock.fish
             '';
           };
           default = self.packages.${system}.oci-lock;

@@ -1,9 +1,19 @@
+import os
 from pathlib import Path
 import sys
 
 from oci_lock.crane import check_crane, normalize_key, resolve_digest
 from oci_lock.lockfile import load_lockfile, save_lockfile
 from oci_lock.ui import bold, cyan, dim, green, red, yellow
+
+
+def _display_path(path: Path) -> str:
+    try:
+        if path.parent.resolve() == Path.cwd().resolve():
+            return path.name
+    except Exception:
+        pass
+    return str(path)
 
 
 def cmd_add(args, lock_path: Path):
@@ -17,23 +27,25 @@ def cmd_add(args, lock_path: Path):
     data[key] = pinned
     save_lockfile(lock_path, data)
 
+    disp = _display_path(lock_path)
     if old_target and old_target != pinned:
         print(
-            green(f"Updated {bold(key)}: {dim(old_target)} -> {bold(pinned)} in {lock_path.name}")
+            green(f"Updated {bold(key)}: {dim(old_target)} -> {bold(pinned)} in {disp}")
         )
     else:
-        print(green(f"Added {bold(key)} -> {bold(pinned)} to {lock_path.name}"))
+        print(green(f"Added {bold(key)} -> {bold(pinned)} to {disp}"))
 
 
 def cmd_remove(args, lock_path: Path):
+    disp = _display_path(lock_path)
     if not lock_path.exists():
         sys.exit(
-            red(f"Error: '{lock_path.name}' not found in current directory.")
+            red(f"Error: '{disp}' not found.")
         )
 
     data = load_lockfile(lock_path)
     if not data:
-        sys.exit(yellow(f"'{lock_path.name}' is empty."))
+        sys.exit(yellow(f"'{disp}' is empty."))
 
     key = normalize_key(args.name)
     if key in data:
@@ -43,7 +55,7 @@ def cmd_remove(args, lock_path: Path):
         if not matches:
             sys.exit(
                 red(
-                    f"Error: '{args.name}' not found in {lock_path.name}.\nKnown entries:\n"
+                    f"Error: '{args.name}' not found in {disp}.\nKnown entries:\n"
                     + "\n".join(f"  - {k}" for k in data.keys())
                 )
             )
@@ -59,19 +71,20 @@ def cmd_remove(args, lock_path: Path):
 
     del data[target_key]
     save_lockfile(lock_path, data)
-    print(green(f"Removed {bold(target_key)} from {lock_path.name}"))
+    print(green(f"Removed {bold(target_key)} from {disp}"))
 
 
 def cmd_update(args, lock_path: Path):
     check_crane()
+    disp = _display_path(lock_path)
     if not lock_path.exists():
         sys.exit(
-            red(f"Error: '{lock_path.name}' not found in current directory. Use 'oci-lock add <image>' first.")
+            red(f"Error: '{disp}' not found. Use 'oci-lock add <image>' first.")
         )
 
     data = load_lockfile(lock_path)
     if not data:
-        sys.exit(yellow(f"'{lock_path.name}' is empty."))
+        sys.exit(yellow(f"'{disp}' is empty."))
 
     target_keys = []
     if args.image:
@@ -81,7 +94,7 @@ def cmd_update(args, lock_path: Path):
             if not matches:
                 sys.exit(
                     red(
-                        f"Error: '{args.image}' not found in {lock_path.name}.\nKnown entries:\n"
+                        f"Error: '{args.image}' not found in {disp}.\nKnown entries:\n"
                         + "\n".join(f"  - {k}" for k in data.keys())
                     )
                 )
@@ -127,3 +140,18 @@ def cmd_update(args, lock_path: Path):
             print(f"  • {key}: {dim(val)}")
     else:
         print(dim("Unchanged: (none)"))
+
+
+def cmd_completion(args):
+    shell = getattr(args, "shell", None)
+    if not shell:
+        shell_env = os.environ.get("SHELL", "")
+        if "zsh" in shell_env:
+            shell = "zsh"
+        elif "fish" in shell_env:
+            shell = "fish"
+        else:
+            shell = "bash"
+    from oci_lock.completion import generate_completion_script
+    print(generate_completion_script(shell))
+
